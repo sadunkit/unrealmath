@@ -544,4 +544,339 @@ bool FTransformConversions::RunTest(const FString& Parameters)
     return true;
 }
 
+// ===================================================================
+//  FTransform Tests
+// ===================================================================
+
+// --------------- Construction ---------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FTransformConstruction,
+    "UnrealMath.Transforms.FTransform.Construction",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTransformConstruction::RunTest(const FString& Parameters)
+{
+    using namespace TransformTestHelpers;
+
+    // Identity transform
+    FTransform Identity = FTransform::Identity;
+    TestTrue(TEXT("Identity location is zero"), Identity.GetLocation().IsNearlyZero());
+    TestTrue(TEXT("Identity rotation is identity"), Identity.GetRotation().Equals(FQuat::Identity, Tolerance));
+    TestTrue(TEXT("Identity scale is one"), Identity.GetScale3D().Equals(FVector::OneVector, Tolerance));
+
+    // From location only
+    FTransform T1(FVector(100.0, 200.0, 50.0));
+    TestTrue(TEXT("Location-only constructor"), T1.GetLocation().Equals(FVector(100.0, 200.0, 50.0), Tolerance));
+    TestTrue(TEXT("Default rotation is identity"), T1.GetRotation().Equals(FQuat::Identity, Tolerance));
+
+    // From rotation only
+    FQuat Rot90 = FQuat(FVector::UpVector, FMath::DegreesToRadians(90.0));
+    FTransform T2(Rot90);
+    TestTrue(TEXT("Rotation-only constructor"), T2.GetRotation().Equals(Rot90, Tolerance));
+    TestTrue(TEXT("Default location is zero"), T2.GetLocation().IsNearlyZero());
+
+    // Full constructor (Rotation, Translation, Scale)
+    FTransform T3(Rot90, FVector(100.0, 0.0, 0.0), FVector(2.0, 2.0, 2.0));
+    TestTrue(TEXT("Full constructor rotation"), T3.GetRotation().Equals(Rot90, Tolerance));
+    TestTrue(TEXT("Full constructor location"), T3.GetLocation().Equals(FVector(100.0, 0.0, 0.0), Tolerance));
+    TestTrue(TEXT("Full constructor scale"), T3.GetScale3D().Equals(FVector(2.0, 2.0, 2.0), Tolerance));
+
+    return true;
+}
+
+// --------------- Local to World Conversion ---------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FTransformLocalToWorld,
+    "UnrealMath.Transforms.FTransform.LocalToWorld",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTransformLocalToWorld::RunTest(const FString& Parameters)
+{
+    using namespace TransformTestHelpers;
+
+    // Transform: 90° yaw, position at (100, 0, 0), scale 2
+    FQuat Rot90 = FQuat(FVector::UpVector, FMath::DegreesToRadians(90.0));
+    FTransform Transform(Rot90, FVector(100.0, 0.0, 0.0), FVector(2.0, 2.0, 2.0));
+
+    // TransformPosition: applies scale, rotation, and translation
+    FVector LocalPos(10.0, 0.0, 0.0);  // 10 units forward in local space
+    FVector WorldPos = Transform.TransformPosition(LocalPos);
+    // After scale (20, 0, 0), after 90° rotation (0, 20, 0), after translation (100, 20, 0)
+    TestTrue(TEXT("TransformPosition with scale+rot+trans"),
+        WorldPos.Equals(FVector(100.0, 20.0, 0.0), Tolerance));
+
+    // TransformVector: applies scale and rotation, no translation
+    FVector LocalDir = FVector::ForwardVector;
+    FVector WorldDir = Transform.TransformVector(LocalDir);
+    // After scale (2, 0, 0), after 90° rotation (0, 2, 0)
+    TestTrue(TEXT("TransformVector with scale+rot"),
+        WorldDir.Equals(FVector(0.0, 2.0, 0.0), Tolerance));
+
+    // TransformVectorNoScale: rotation only
+    FVector WorldDirNoScale = Transform.TransformVectorNoScale(LocalDir);
+    // After 90° rotation: (0, 1, 0)
+    TestTrue(TEXT("TransformVectorNoScale rotation only"),
+        WorldDirNoScale.Equals(FVector(0.0, 1.0, 0.0), Tolerance));
+
+    return true;
+}
+
+// --------------- World to Local Conversion ---------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FTransformWorldToLocal,
+    "UnrealMath.Transforms.FTransform.WorldToLocal",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTransformWorldToLocal::RunTest(const FString& Parameters)
+{
+    using namespace TransformTestHelpers;
+
+    FQuat Rot90 = FQuat(FVector::UpVector, FMath::DegreesToRadians(90.0));
+    FTransform Transform(Rot90, FVector(100.0, 0.0, 0.0), FVector(2.0, 2.0, 2.0));
+
+    // InverseTransformPosition
+    FVector WorldPos(100.0, 20.0, 0.0);
+    FVector LocalPos = Transform.InverseTransformPosition(WorldPos);
+    // Remove translation (0, 20, 0), remove rotation (20, 0, 0), remove scale (10, 0, 0)
+    TestTrue(TEXT("InverseTransformPosition"),
+        LocalPos.Equals(FVector(10.0, 0.0, 0.0), Tolerance));
+
+    // InverseTransformVector
+    FVector WorldDir(0.0, 2.0, 0.0);
+    FVector LocalDir = Transform.InverseTransformVector(WorldDir);
+    // Remove rotation (2, 0, 0), remove scale (1, 0, 0)
+    TestTrue(TEXT("InverseTransformVector"),
+        LocalDir.Equals(FVector(1.0, 0.0, 0.0), Tolerance));
+
+    // InverseTransformVectorNoScale
+    FVector LocalDirNoScale = Transform.InverseTransformVectorNoScale(WorldDir);
+    // Remove rotation only: (2, 0, 0)
+    TestTrue(TEXT("InverseTransformVectorNoScale"),
+        LocalDirNoScale.Equals(FVector(2.0, 0.0, 0.0), Tolerance));
+
+    return true;
+}
+
+// --------------- Transform Composition ---------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FTransformComposition,
+    "UnrealMath.Transforms.FTransform.Composition",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTransformComposition::RunTest(const FString& Parameters)
+{
+    using namespace TransformTestHelpers;
+
+    // Parent transform: 90° yaw at (100, 0, 0)
+    FQuat ParentRot = FQuat(FVector::UpVector, FMath::DegreesToRadians(90.0));
+    FTransform Parent(ParentRot, FVector(100.0, 0.0, 0.0), FVector::OneVector);
+
+    // Child transform: offset 50 units forward in parent's space
+    FTransform Child(FQuat::Identity, FVector(50.0, 0.0, 0.0), FVector::OneVector);
+
+    // Compose: Child * Parent applies Child first, then Parent
+    FTransform ChildToWorld = Child * Parent;
+
+    // Child's offset (50, 0, 0) rotated 90° = (0, 50, 0), then translated by (100, 0, 0) = (100, 50, 0)
+    TestTrue(TEXT("Composition location"),
+        ChildToWorld.GetLocation().Equals(FVector(100.0, 50.0, 0.0), Tolerance));
+
+    // Rotation should be 90° (parent's rotation)
+    TestTrue(TEXT("Composition rotation"),
+        ChildToWorld.GetRotation().Equals(ParentRot, Tolerance));
+
+    return true;
+}
+
+// --------------- GetRelativeTransform ---------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FTransformGetRelative,
+    "UnrealMath.Transforms.FTransform.GetRelativeTransform",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTransformGetRelative::RunTest(const FString& Parameters)
+{
+    using namespace TransformTestHelpers;
+
+    FTransform A(FQuat::Identity, FVector(100.0, 0.0, 0.0), FVector::OneVector);
+    FTransform B(FQuat::Identity, FVector(150.0, 50.0, 0.0), FVector::OneVector);
+
+    // B relative to A
+    FTransform BRelativeToA = B.GetRelativeTransform(A);
+
+    // B is 50 units forward and 50 units right of A
+    TestTrue(TEXT("GetRelativeTransform location"),
+        BRelativeToA.GetLocation().Equals(FVector(50.0, 50.0, 0.0), Tolerance));
+
+    // Reconstruct B from A and relative transform
+    FTransform ReconstructedB = BRelativeToA * A;
+    TestTrue(TEXT("Reconstruction matches original"),
+        ReconstructedB.GetLocation().Equals(B.GetLocation(), Tolerance));
+
+    return true;
+}
+
+// --------------- Inverse ---------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FTransformInverse,
+    "UnrealMath.Transforms.FTransform.Inverse",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTransformInverse::RunTest(const FString& Parameters)
+{
+    using namespace TransformTestHelpers;
+
+    FQuat Rot45 = FQuat(FVector::UpVector, FMath::DegreesToRadians(45.0));
+    FTransform T(Rot45, FVector(100.0, 50.0, 0.0), FVector(2.0, 2.0, 2.0));
+
+    FTransform InvT = T.Inverse();
+
+    // T * InvT should be identity
+    FTransform Identity = T * InvT;
+    TestTrue(TEXT("T * Inverse ≈ Identity location"),
+        Identity.GetLocation().IsNearlyZero(Tolerance));
+    TestTrue(TEXT("T * Inverse ≈ Identity rotation"),
+        Identity.GetRotation().Equals(FQuat::Identity, Tolerance));
+    TestTrue(TEXT("T * Inverse ≈ Identity scale"),
+        Identity.GetScale3D().Equals(FVector::OneVector, Tolerance));
+
+    // Round-trip: transform and inverse should recover original point
+    FVector Original(25.0, 75.0, 10.0);
+    FVector Transformed = T.TransformPosition(Original);
+    FVector RoundTrip = InvT.TransformPosition(Transformed);
+    TestTrue(TEXT("Inverse round-trip"),
+        RoundTrip.Equals(Original, Tolerance));
+
+    return true;
+}
+
+// --------------- Interpolation (Blend) ---------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FTransformBlend,
+    "UnrealMath.Transforms.FTransform.Blend",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTransformBlend::RunTest(const FString& Parameters)
+{
+    using namespace TransformTestHelpers;
+
+    FTransform Start(FQuat::Identity, FVector(0.0, 0.0, 0.0), FVector(1.0, 1.0, 1.0));
+    FTransform End(FQuat(FVector::UpVector, FMath::DegreesToRadians(90.0)),
+                   FVector(100.0, 0.0, 0.0),
+                   FVector(2.0, 2.0, 2.0));
+
+    // Alpha = 0 → Start
+    FTransform At0;
+    At0.Blend(Start, End, 0.0f);
+    TestTrue(TEXT("Blend at 0 location"), At0.GetLocation().Equals(Start.GetLocation(), Tolerance));
+    TestTrue(TEXT("Blend at 0 rotation"), At0.GetRotation().Equals(Start.GetRotation(), Tolerance));
+
+    // Alpha = 1 → End
+    FTransform At1;
+    At1.Blend(Start, End, 1.0f);
+    TestTrue(TEXT("Blend at 1 location"), At1.GetLocation().Equals(End.GetLocation(), Tolerance));
+    TestTrue(TEXT("Blend at 1 rotation"), At1.GetRotation().Equals(End.GetRotation(), Tolerance));
+
+    // Alpha = 0.5 → Midpoint
+    FTransform Mid;
+    Mid.Blend(Start, End, 0.5f);
+    TestTrue(TEXT("Blend at 0.5 location"),
+        Mid.GetLocation().Equals(FVector(50.0, 0.0, 0.0), Tolerance));
+    TestTrue(TEXT("Blend at 0.5 scale"),
+        Mid.GetScale3D().Equals(FVector(1.5, 1.5, 1.5), Tolerance));
+
+    // Rotation should be 45° (halfway between 0° and 90°)
+    FVector MidForward = Mid.GetRotation().RotateVector(FVector::ForwardVector);
+    double Cos45 = FMath::Cos(FMath::DegreesToRadians(45.0));
+    double Sin45 = FMath::Sin(FMath::DegreesToRadians(45.0));
+    TestTrue(TEXT("Blend at 0.5 rotation direction"),
+        MidForward.Equals(FVector(Cos45, Sin45, 0.0), Tolerance));
+
+    return true;
+}
+
+// --------------- GetUnitAxis ---------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FTransformGetUnitAxis,
+    "UnrealMath.Transforms.FTransform.GetUnitAxis",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTransformGetUnitAxis::RunTest(const FString& Parameters)
+{
+    using namespace TransformTestHelpers;
+
+    // 90° yaw rotation
+    FQuat Rot90 = FQuat(FVector::UpVector, FMath::DegreesToRadians(90.0));
+    FTransform T(Rot90, FVector::ZeroVector, FVector::OneVector);
+
+    FVector Forward = T.GetUnitAxis(EAxis::X);
+    FVector Right = T.GetUnitAxis(EAxis::Y);
+    FVector Up = T.GetUnitAxis(EAxis::Z);
+
+    // After 90° yaw: Forward (X) → Right (Y), Right (Y) → Backward (-X), Up (Z) → Up (Z)
+    TestTrue(TEXT("Forward axis after 90° yaw"),
+        Forward.Equals(FVector(0.0, 1.0, 0.0), Tolerance));
+    TestTrue(TEXT("Right axis after 90° yaw"),
+        Right.Equals(FVector(-1.0, 0.0, 0.0), Tolerance));
+    TestTrue(TEXT("Up axis after 90° yaw"),
+        Up.Equals(FVector(0.0, 0.0, 1.0), Tolerance));
+
+    return true;
+}
+
+// --------------- Round-Trip Conversions ---------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+    FTransformRoundTrips,
+    "UnrealMath.Transforms.FTransform.RoundTrips",
+    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTransformRoundTrips::RunTest(const FString& Parameters)
+{
+    using namespace TransformTestHelpers;
+
+    FQuat Rot = FQuat(FVector::UpVector, FMath::DegreesToRadians(45.0));
+    FTransform T(Rot, FVector(100.0, 50.0, 25.0), FVector(2.0, 2.0, 2.0));
+
+    // Position round-trip
+    {
+        FVector Local(10.0, 20.0, 5.0);
+        FVector World = T.TransformPosition(Local);
+        FVector BackToLocal = T.InverseTransformPosition(World);
+        TestTrue(TEXT("Position round-trip"),
+            BackToLocal.Equals(Local, Tolerance));
+    }
+
+    // Vector round-trip
+    {
+        FVector LocalDir = FVector(1.0, 0.5, 0.2).GetSafeNormal();
+        FVector WorldDir = T.TransformVector(LocalDir);
+        FVector BackToLocal = T.InverseTransformVector(WorldDir);
+        TestTrue(TEXT("Vector round-trip"),
+            BackToLocal.Equals(LocalDir, Tolerance));
+    }
+
+    // Inverse round-trip
+    {
+        FTransform Inv = T.Inverse();
+        FTransform InvInv = Inv.Inverse();
+        TestTrue(TEXT("Inverse round-trip location"),
+            InvInv.GetLocation().Equals(T.GetLocation(), Tolerance));
+        TestTrue(TEXT("Inverse round-trip rotation"),
+            InvInv.GetRotation().Equals(T.GetRotation(), Tolerance));
+        TestTrue(TEXT("Inverse round-trip scale"),
+            InvInv.GetScale3D().Equals(T.GetScale3D(), Tolerance));
+    }
+
+    return true;
+}
+
 #endif // WITH_AUTOMATION_TESTS
